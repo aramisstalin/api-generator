@@ -1,0 +1,84 @@
+"""
+{{ entity.name }} service.
+
+Business logic for {{ entity.name }} entity.
+"""
+
+from typing import Optional, List, Dict, Any
+from uuid import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ app_name }}.models.{{ entity.name | lower }} import {{ entity.name }}
+from {{ app_name }}.schemas.{{ entity.name | lower }} import {{ entity.name }}Create, {{ entity.name }}Update
+from {{ app_name }}.repositories.{{ entity.name | lower }}_repository import {{ entity.name }}Repository
+from {{ app_name }}.services.base import BaseService
+
+
+class {{ entity.name }}Service(BaseService[{{ entity.name }}, {{ entity.name }}Create, {{ entity.name }}Update]):
+    """Service for {{ entity.name }} business logic"""
+
+    def __init__(self, db: AsyncSession):
+        repository = {{ entity.name }}Repository(db)
+        super().__init__(repository, db)
+
+    {% if has_validations %}
+    async def _validate_create(self, obj_data: Dict[str, Any]) -> None:
+        """Validate data before creating {{ entity.name }}"""
+        {% for validation in create_validations %}
+        # {{ validation.description }}
+        {{ validation.code | indent(8) }}
+        {% endfor %}
+
+    async def _validate_update(
+        self,
+        existing: {{ entity.name }},
+        update_data: Dict[str, Any]
+    ) -> None:
+        """Validate data before updating {{ entity.name }}"""
+        {% for validation in update_validations %}
+        # {{ validation.description }}
+        {{ validation.code | indent(8) }}
+        {% endfor %}
+
+    async def _validate_delete(self, existing: {{ entity.name }}) -> None:
+        """Validate before deleting {{ entity.name }}"""
+        {% for validation in delete_validations %}
+        # {{ validation.description }}
+        {{ validation.code | indent(8) }}
+        {% endfor %}
+    {% endif %}
+
+    {% if has_events %}
+    async def _after_create(self, entity: {{ entity.name }}) -> None:
+        """Execute after {{ entity.name }} creation"""
+        # TODO: Add event publishing, notifications, etc.
+        pass
+
+    async def _after_update(
+        self,
+        updated: {{ entity.name }},
+        original: {{ entity.name }}
+    ) -> None:
+        """Execute after {{ entity.name }} update"""
+        # TODO: Add event publishing, audit logging, etc.
+        pass
+
+    async def _after_delete(self, entity: {{ entity.name }}) -> None:
+        """Execute after {{ entity.name }} deletion"""
+        # TODO: Add cleanup, event publishing, etc.
+        pass
+    {% endif %}
+
+    {% for method in business_methods %}
+    async def {{ method.name }}(self{{ method.parameters }}) -> {{ method.return_type }}:
+        """
+        {{ method.description }}
+
+        Args:
+            {{ method.args_doc }}
+
+        Returns:
+            {{ method.returns_doc }}
+        """
+        {{ method.body | indent(8) }}
+    {% endfor %}

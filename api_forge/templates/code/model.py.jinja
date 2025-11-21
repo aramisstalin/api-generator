@@ -1,0 +1,58 @@
+"""
+{{ entity.name }} model.
+
+{{ entity.description }}
+
+Schema.org: {{ entity.url }}
+"""
+
+{{ imports | join('\n') }}
+
+
+class {{ entity.name }}({{ mixins | join(', ') }}):
+    """{{ entity.description }}"""
+
+    __tablename__ = "{{ table_name }}"
+
+    {% for column in columns %}
+    # {{ column.description }}
+    {{ column.name }} = Column(
+        {{ column.type }},
+        {% if column.nullable %}nullable=True,{% else %}nullable=False,{% endif %}
+        {% if column.unique %}unique=True,{% endif %}
+        {% if column.index %}index=True,{% endif %}
+    )
+    {% endfor %}
+
+    {% for rel in relationships %}
+    {% if rel.type == 'many_to_one' %}
+    # Foreign key for {{ rel.name }}
+    {{ rel.foreign_key }} = Column(PG_UUID(as_uuid=True), ForeignKey("{{ rel.target | lower }}s.id"))
+
+    # Relationship: {{ rel.name }}
+    {{ rel.name }} = relationship(
+        "{{ rel.target }}",
+        back_populates="{{ rel.back_populates }}"
+    )
+    {% elif rel.type == 'many_to_many' %}
+    # Many-to-many relationship: {{ rel.name }}
+    {{ rel.name }} = relationship(
+        "{{ rel.target }}",
+        secondary="{{ rel.association_table }}",
+        back_populates="{{ rel.back_populates }}"
+    )
+    {% elif rel.type == 'one_to_one' %}
+    # Foreign key for {{ rel.name }}
+    {{ rel.foreign_key }} = Column(PG_UUID(as_uuid=True), ForeignKey("{{ rel.target | lower }}s.id"), unique=True)
+
+    # One-to-one relationship: {{ rel.name }}
+    {{ rel.name }} = relationship(
+        "{{ rel.target }}",
+        back_populates="{{ rel.back_populates }}",
+        uselist=False
+    )
+    {% endif %}
+    {% endfor %}
+
+    def __repr__(self) -> str:
+        return f"<{{ entity.name }}(id={self.id})>"

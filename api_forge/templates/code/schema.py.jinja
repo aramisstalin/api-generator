@@ -1,0 +1,104 @@
+"""
+{{ entity.name }} schemas.
+
+Pydantic models for request/response validation.
+"""
+
+from datetime import datetime, date
+from typing import Optional, List
+from uuid import UUID
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import EmailStr, AnyHttpUrl
+from decimal import Decimal
+
+
+# Base schema with common fields
+class {{ entity.name }}Base(BaseModel):
+    """Base schema for {{ entity.name }}"""
+
+    {% for field in base_fields %}
+    {{ field.name }}: {{ field.type_annotation }}{% if field.has_default %} = {{ field.default }}{% endif %}
+    {% endfor %}
+
+    {% if validators %}
+    # Field validators
+    {% for validator in validators %}
+    {{ validator.code }}
+    {% endfor %}
+    {% endif %}
+
+
+# Create schema (for POST requests)
+class {{ entity.name }}Create({{ entity.name }}Base):
+    """Schema for creating {{ entity.name }}"""
+
+    {% for field in required_fields %}
+    {{ field.name }}: {{ field.type_annotation }}
+    {% endfor %}
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {{ create_example | tojson }}
+        }
+    )
+
+
+# Update schema (for PATCH/PUT requests)
+class {{ entity.name }}Update(BaseModel):
+    """Schema for updating {{ entity.name }} (all fields optional)"""
+
+    {% for field in updatable_fields %}
+    {{ field.name }}: Optional[{{ field.type_annotation }}] = None
+    {% endfor %}
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {{ update_example | tojson }}
+        }
+    )
+
+
+# Response schema (includes ID and timestamps)
+class {{ entity.name }}Response({{ entity.name }}Base):
+    """Schema for {{ entity.name }} responses"""
+
+    id: UUID
+    {% if has_timestamps %}
+    created_at: datetime
+    updated_at: datetime
+    {% endif %}
+    {% if has_soft_delete %}
+    is_deleted: bool
+    deleted_at: Optional[datetime] = None
+    {% endif %}
+
+    {% for rel in relationships %}
+    {% if rel.type == 'many_to_one' %}
+    {{ rel.name }}: Optional['{{ rel.target }}Response'] = None
+    {% elif rel.type == 'many_to_many' %}
+    {{ rel.name }}: List['{{ rel.target }}Response'] = Field(default_factory=list)
+    {% endif %}
+    {% endfor %}
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# List response schema with pagination
+class {{ entity.name }}ListResponse(BaseModel):
+    """Paginated list of {{ entity.name }} objects"""
+
+    items: List[{{ entity.name }}Response]
+    total: int
+    page: int
+    page_size: int
+
+    @property
+    def total_pages(self) -> int:
+        """Calculate total number of pages"""
+        return (self.total + self.page_size - 1) // self.page_size
+
+
+# Update forward references for relationships
+{% for rel in relationships %}
+{{ entity.name }}Response.model_rebuild()
+{% endfor %}

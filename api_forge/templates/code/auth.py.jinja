@@ -1,0 +1,181 @@
+"""
+Authentication endpoints.
+
+Handles user authentication, registration, and token management.
+"""
+
+from datetime import timedelta
+from typing import Any
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ app_name }}.core.config import settings
+from {{ app_name }}.core.security import (
+    verify_password,
+    create_access_token,
+    create_refresh_token,
+    decode_token
+)
+from {{ app_name }}.db.session import get_db
+from {{ app_name }}.models.user import User
+from {{ app_name }}.schemas.auth import Token, TokenRefresh, UserRegister
+from {{ app_name }}.schemas.user import UserResponse
+from {{ app_name }}.services.user_service import UserService
+
+router = APIRouter(prefix="/auth", tags=["authentication"])
+
+
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(
+    *,
+    db: AsyncSession = Depends(get_db),
+    user_in: UserRegister
+) -> Any:
+    """
+    Register new user.
+
+    Creates a new user account with hashed password.
+    """
+    user_service = UserService(db)
+
+    # Check if user exists
+    existing_user = await user_service.get_by_email(user_in.email)
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User with this email already exists"
+        )
+
+    # Check username
+    existing_username = await user_service.get_by_username(user_in.username)
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken"
+        )
+
+    # Create user
+    user = await user_service.create_user(user_in)
+    return user
+
+
+@router.post("/login", response_model=Token)
+async def login(
+    db: AsyncSession = Depends(get_db),
+    form_data: OAuth2PasswordRequestForm = Depends()
+) -> Any:
+    """
+    Login and get access token.
+
+    OAuth2 compatible token login, get an access token for future requests.
+    """
+    user_service = UserService(db)
+
+    # Authenticate user (username field can be email or username)
+    user = await user_service.authenticate(
+        email_or_username=form_data.username,
+        password=form_data.password
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email/username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive user"
+        )
+
+    # Create tokens
+    access_token = create_access_token(
+        data={"sub": str(user.id), "email": user.email}
+    )
+    refresh_token = create_refresh_token(
+        data={"sub": str(user.id)}
+    )
+
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer"
+    )
+
+
+@router.post("/refresh", response_model=Token)
+async def refresh_token(
+    *,
+    db: AsyncSession = Depends(get_db),
+    token_refresh: TokenRefresh
+) -> Any:
+    """
+    Refresh access token.
+
+    Use a refresh token to get a new access token.
+    """
+    try:
+        payload = decode_token(token_refresh.refresh_token)
+
+        # Verify token type
+        if payload.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
+
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+
+        # Get user
+        user_service = UserService(db)
+        user = await user_service.get_by_id(user_id)
+
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or inactive"
+            )
+
+        # Create new tokens
+        access_token = create_access_token(
+            data={"sub": str(user.id), "email": user.email}
+        )
+        new_refresh_token = create_refresh_token(
+            data={"sub": str(user.id)}
+        )
+
+        return Token(
+            access_token=access_token,
+            refresh_token=new_refresh_token,
+            token_type="bearer"
+        )
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        )
+
+
+@router.post("/logout")
+async def logout(
+    # In a real application, you might want to blacklist the token
+    # or store it in Redis with an expiration
+) -> Any:
+    """
+    Logout user.
+
+    Note: With JWT, the token remains valid until expiration.
+    Consider implementing token blacklisting for production use.
+    """
+    return {"message": "Successfully logged out"}

@@ -1,0 +1,153 @@
+"""
+Rate limiting middleware.
+
+Protects API from abuse by limiting request rates per client.
+"""
+
+import time
+from typing import Callable, Dict, Tuple
+from fastapi import Request, Response, HTTPException, status
+from starlette.middleware.base import BaseHTTPMiddleware
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+from {{ app_name }}.core.config import settings
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """
+    Rate limiting middleware using in-memory storage.
+
+    For production, consider using Redis for distributed rate limiting.
+
+    Different limits for:
+    - Anonymous users (by IP)
+    - Authenticated users (by user ID)
+    """
+
+    def __init__(self, app, rate_limit: int = 100):
+        super().__init__(app)
+        self.rate_limit = rate_limit
+
+        # In-memory storage: {client_id: {window: count}}
+        self.request_counts: Dict[str, Dict[int, int]] = defaultdict(dict)
+
+        # Different limits by user type
+        self.limits = {
+            "anonymous": settings.RATE_LIMIT_ANONYMOUS,
+            "authenticated": settings.RATE_LIMIT_AUTHENTICATED,
+        }
+
+        # Window size in seconds
+        self.window_size = 60  # 1 minute
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable
+    ) -> Response:
+        # Get client identifier
+        client_id = await self._get_client_id(request)
+        user_type = await self._get_user_type(request)
+
+        # Check rate limit
+        allowed, retry_after = self._check_rate_limit(client_id, user_type)
+
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded",
+                headers={
+                    "Retry-After": str(retry_after),
+                    "X-RateLimit-Limit": str(self.limits[user_type]),
+                    "X-RateLimit-Remaining": "0"
+                }
+            )
+
+        # Process request
+        response = await call_next(request)
+
+        # Add rate limit headers
+        remaining = self._get_remaining(client_id, user_type)
+        response.headers["X-RateLimit-Limit"] = str(self.limits[user_type])
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
+
+        return response
+
+    async def _get_client_id(self, request: Request) -> str:
+        """Get unique client identifier"""
+        # Try to get user ID from token
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            try:
+                from {{ app_name }}.core.security import decode_token
+                token = auth_header.replace("Bearer ", "")
+                payload = decode_token(token)
+                user_id = payload.get("sub")
+                if user_id:
+                    return f"user:{user_id}"
+            except:
+                pass
+
+        # Fall back to IP address
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return f"ip:{forwarded.split(',')[0].strip()}"
+
+        if request.client:
+            return f"ip:{request.client.host}"
+
+        return "ip:unknown"
+
+    async def _get_user_type(self, request: Request) -> str:
+        """Determine user type for rate limiting"""
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            return "authenticated"
+        return "anonymous"
+
+    def _check_rate_limit(
+        self,
+        client_id: str,
+        user_type: str
+    ) -> Tuple[bool, int]:
+        """Check if client has exceeded rate limit"""
+        current_time = int(time.time())
+        window = current_time // self.window_size
+        limit = self.limits[user_type]
+
+        # Clean old windows
+        self._clean_old_windows(client_id, window)
+
+        # Get current count
+        current_count = self.request_counts[client_id].get(window, 0)
+
+        if current_count >= limit:
+            # Calculate retry after
+            next_window = (window + 1) * self.window_size
+            retry_after = next_window - current_time
+            return False, retry_after
+
+        # Increment counter
+        self.request_counts[client_id][window] = current_count + 1
+
+        return True, 0
+
+    def _get_remaining(self, client_id: str, user_type: str) -> int:
+        """Get remaining requests for client"""
+        current_time = int(time.time())
+        window = current_time // self.window_size
+        limit = self.limits[user_type]
+
+        current_count = self.request_counts[client_id].get(window, 0)
+        return max(0, limit - current_count)
+
+    def _clean_old_windows(self, client_id: str, current_window: int) -> None:
+        """Remove old window data"""
+        if client_id in self.request_counts:
+            old_windows = [
+                w for w in self.request_counts[client_id]
+                if w < current_window - 1
+            ]
+            for w in old_windows:
+                del self.request_counts[client_id][w]

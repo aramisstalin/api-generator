@@ -1,0 +1,222 @@
+"""
+{{ entity.name }} API endpoints.
+
+REST API routes for {{ entity.name }} operations.
+"""
+
+from typing import List
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ app_name }}.db.session import get_db
+{% if requires_auth %}
+from {{ app_name }}.core.dependencies import get_current_active_user
+{% if enable_rbac %}
+from {{ app_name }}.core.dependencies import require_permissions
+{% endif %}
+from {{ app_name }}.models.user import User
+{% endif %}
+from {{ app_name }}.models.{{ entity.name | lower }} import {{ entity.name }}
+from {{ app_name }}.schemas.{{ entity.name | lower }} import (
+    {{ entity.name }}Create,
+    {{ entity.name }}Update,
+    {{ entity.name }}Response,
+    {{ entity.name }}ListResponse
+)
+from {{ app_name }}.services.{{ entity.name | lower }}_service import {{ entity.name }}Service
+{% if enable_pagination %}
+from {{ app_name }}.utils.pagination import PaginationParams
+{% endif %}
+{% if enable_filtering %}
+from {{ app_name }}.utils.filtering import FilterParams
+{% endif %}
+
+router = APIRouter(prefix="/{{ entity.name | lower }}s", tags=["{{ entity.name }}"])
+
+
+@router.post(
+    "/",
+    response_model={{ entity.name }}Response,
+    status_code=status.HTTP_201_CREATED,
+    {% if requires_auth and enable_rbac %}
+    dependencies=[Depends(require_permissions("{{ permissions.create }}"))]
+    {% endif %}
+)
+async def create_{{ entity.name | lower }}(
+    *,
+    db: AsyncSession = Depends(get_db),
+    {{ entity.name | lower }}_in: {{ entity.name }}Create,
+    {% if requires_auth %}
+    current_user: User = Depends(get_current_active_user)
+    {% endif %}
+) -> {{ entity.name }}:
+    """
+    Create new {{ entity.name }}.
+
+    {% if entity.description %}
+    {{ entity.description }}
+    {% endif %}
+    """
+    service = {{ entity.name }}Service(db)
+
+    {% if requires_auth %}
+    {{ entity.name | lower }} = await service.create(
+        {{ entity.name | lower }}_in,
+        created_by=current_user.id
+    )
+    {% else %}
+    {{ entity.name | lower }} = await service.create({{ entity.name | lower }}_in)
+    {% endif %}
+
+    return {{ entity.name | lower }}
+
+
+@router.get(
+    "/",
+    response_model={{ entity.name }}ListResponse,
+    {% if requires_auth and enable_rbac %}
+    dependencies=[Depends(require_permissions("{{ permissions.read }}"))]
+    {% endif %}
+)
+async def list_{{ entity.name | lower }}s(
+    *,
+    db: AsyncSession = Depends(get_db),
+    {% if enable_pagination %}
+    pagination: PaginationParams = Depends(),
+    {% endif %}
+    {% if enable_filtering %}
+    filters: FilterParams = Depends(),
+    {% endif %}
+    {% if requires_auth %}
+    current_user: User = Depends(get_current_active_user)
+    {% endif %}
+) -> {{ entity.name }}ListResponse:
+    """
+    List {{ entity.name }}s with pagination{% if enable_filtering %} and filtering{% endif %}.
+    """
+    service = {{ entity.name }}Service(db)
+
+    {{ entity.name | lower }}s, total = await service.list(
+        {% if enable_pagination %}
+        skip=pagination.skip,
+        limit=pagination.limit,
+        {% endif %}
+        {% if enable_filtering %}
+        filters=filters.to_dict(),
+        {% endif %}
+    )
+
+    return {{ entity.name }}ListResponse(
+        items={{ entity.name | lower }}s,
+        total=total,
+        {% if enable_pagination %}
+        page=pagination.page,
+        page_size=pagination.page_size
+        {% else %}
+        page=1,
+        page_size=total
+        {% endif %}
+    )
+
+
+@router.get(
+    "/{id}",
+    response_model={{ entity.name }}Response,
+    {% if requires_auth and enable_rbac %}
+    dependencies=[Depends(require_permissions("{{ permissions.read }}"))]
+    {% endif %}
+)
+async def get_{{ entity.name | lower }}(
+    *,
+    db: AsyncSession = Depends(get_db),
+    id: UUID,
+    {% if requires_auth %}
+    current_user: User = Depends(get_current_active_user)
+    {% endif %}
+) -> {{ entity.name }}:
+    """
+    Get {{ entity.name }} by ID.
+    """
+    service = {{ entity.name }}Service(db)
+    {{ entity.name | lower }} = await service.get_by_id(id)
+
+    if not {{ entity.name | lower }}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="{{ entity.name }} not found"
+        )
+
+    return {{ entity.name | lower }}
+
+
+@router.patch(
+    "/{id}",
+    response_model={{ entity.name }}Response,
+    {% if requires_auth and enable_rbac %}
+    dependencies=[Depends(require_permissions("{{ permissions.update }}"))]
+    {% endif %}
+)
+async def update_{{ entity.name | lower }}(
+    *,
+    db: AsyncSession = Depends(get_db),
+    id: UUID,
+    {{ entity.name | lower }}_in: {{ entity.name }}Update,
+    {% if requires_auth %}
+    current_user: User = Depends(get_current_active_user)
+    {% endif %}
+) -> {{ entity.name }}:
+    """
+    Update {{ entity.name }}.
+    """
+    service = {{ entity.name }}Service(db)
+
+    {{ entity.name | lower }} = await service.update(
+        id,
+        {{ entity.name | lower }}_in,
+        {% if requires_auth %}
+        updated_by=current_user.id
+        {% endif %}
+    )
+
+    if not {{ entity.name | lower }}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="{{ entity.name }} not found"
+        )
+
+    return {{ entity.name | lower }}
+
+
+@router.delete(
+    "/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    {% if requires_auth and enable_rbac %}
+    dependencies=[Depends(require_permissions("{{ permissions.delete }}"))]
+    {% endif %}
+)
+async def delete_{{ entity.name | lower }}(
+    *,
+    db: AsyncSession = Depends(get_db),
+    id: UUID,
+    {% if requires_auth %}
+    current_user: User = Depends(get_current_active_user)
+    {% endif %}
+):
+    """
+    Delete {{ entity.name }}.
+    """
+    service = {{ entity.name }}Service(db)
+
+    success = await service.delete(
+        id,
+        {% if requires_auth %}
+        deleted_by=current_user.id
+        {% endif %}
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="{{ entity.name }} not found"
+        )

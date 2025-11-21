@@ -1,0 +1,91 @@
+"""
+Filtering utilities.
+
+Provides dynamic filtering for list endpoints.
+"""
+
+from typing import Dict, Any, Optional
+from enum import Enum
+
+
+class FilterOperator(str, Enum):
+    """Supported filter operators"""
+    EQ = "eq"       # Equal
+    NE = "ne"       # Not equal
+    GT = "gt"       # Greater than
+    GTE = "gte"     # Greater than or equal
+    LT = "lt"       # Less than
+    LTE = "lte"     # Less than or equal
+    IN = "in"       # In list
+    LIKE = "like"   # SQL LIKE (case-sensitive)
+    ILIKE = "ilike" # SQL ILIKE (case-insensitive)
+
+
+class FilterParams:
+    """
+    Dynamic filtering parameters.
+
+    Accepts filters in format: field__operator=value
+
+    Examples:
+        age__gte=18
+        status__in=active,pending
+        name__ilike=%john%
+    """
+
+    def __init__(self, filters: Optional[str] = None):
+        self.filters = self._parse_filters(filters) if filters else {}
+
+    def _parse_filters(self, filter_string: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Parse filter string into structured format.
+
+        Args:
+            filter_string: Query string with filters
+
+        Returns:
+            Dictionary of filters
+        """
+        parsed = {}
+
+        # Split by & to get individual filters
+        for filter_expr in filter_string.split("&"):
+            if "__" not in filter_expr or "=" not in filter_expr:
+                continue
+
+            try:
+                field_op, value = filter_expr.split("=", 1)
+
+                if "__" not in field_op:
+                    # No operator specified, default to eq
+                    field = field_op
+                    operator = "eq"
+                else:
+                    field, operator = field_op.rsplit("__", 1)
+
+                # Validate operator
+                if operator not in [op.value for op in FilterOperator]:
+                    continue
+
+                # Handle list values (comma-separated)
+                if operator == "in":
+                    value = value.split(",")
+
+                parsed[field] = {"operator": operator, "value": value}
+
+            except ValueError:
+                continue
+
+        return parsed
+
+    def to_dict(self) -> Dict[str, Dict[str, Any]]:
+        """Get filters as dictionary"""
+        return self.filters
+
+    def has_filter(self, field: str) -> bool:
+        """Check if field has a filter"""
+        return field in self.filters
+
+    def get_filter(self, field: str) -> Optional[Dict[str, Any]]:
+        """Get filter for specific field"""
+        return self.filters.get(field)

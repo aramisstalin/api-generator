@@ -1,0 +1,47 @@
+"""
+Correlation ID middleware.
+
+Adds unique correlation IDs to all requests for tracing.
+"""
+
+from uuid import uuid4
+from typing import Callable
+from fastapi import Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class CorrelationIdMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to add correlation IDs to requests.
+
+    The correlation ID can be:
+    1. Provided by client via X-Correlation-ID header
+    2. Auto-generated if not provided
+
+    The ID is:
+    - Stored in request.state for access in endpoints
+    - Returned in response header
+    - Used for log correlation
+    """
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable
+    ) -> Response:
+        # Get or generate correlation ID
+        correlation_id = request.headers.get(
+            "X-Correlation-ID",
+            str(uuid4())
+        )
+
+        # Store in request state
+        request.state.correlation_id = correlation_id
+
+        # Process request
+        response = await call_next(request)
+
+        # Add to response headers
+        response.headers["X-Correlation-ID"] = correlation_id
+
+        return response

@@ -1,0 +1,177 @@
+"""
+FastAPI dependencies.
+
+Authentication, authorization, and common dependencies.
+"""
+
+from typing import Optional
+from uuid import UUID
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from {{ app_name }}.db.session import get_db
+from {{ app_name }}.core.security import decode_token
+from {{ app_name }}.models.user import User
+from {{ app_name }}.repositories.user_repository import UserRepository
+
+# OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl=f"{settings.API_V1_STR}/auth/login"
+)
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Get current authenticated user from JWT token.
+
+    Args:
+        token: JWT access token
+        db: Database session
+
+    Returns:
+        Current user
+
+    Raises:
+        HTTPException: If token is invalid or user not found
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        payload = decode_token(token)
+        user_id: Optional[str] = payload.get("sub")
+
+        if user_id is None:
+            raise credentials_exception
+
+        # Verify token type
+        if payload.get("type") != "access":
+            raise credentials_exception
+
+    except Exception:
+        raise credentials_exception
+
+    user_repo = UserRepository(db)
+    user = await user_repo.get_by_id(UUID(user_id))
+
+    if user is None:
+        raise credentials_exception
+
+    return user
+
+
+async def get_current_active_user(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """
+    Ensure current user is active.
+
+    Args:
+        current_user: Current authenticated user
+
+    Returns:
+        Active user
+
+    Raises:
+        HTTPException: If user is inactive
+    """
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive user"
+        )
+    return current_user
+
+
+async def get_current_superuser(
+    current_user: User = Depends(get_current_active_user)
+) -> User:
+    """
+    Ensure current user is a superuser.
+
+    Args:
+        current_user: Current authenticated user
+
+    Returns:
+        Superuser
+
+    Raises:
+        HTTPException: If user is not a superuser
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough privileges"
+        )
+    return current_user
+
+
+def require_permissions(*required_permissions: str):
+    """
+    Dependency to check user permissions (RBAC).
+
+    Args:
+        *required_permissions: Permission strings (e.g., "user:create")
+
+    Returns:
+        Dependency function
+
+    Example:
+        @router.post("/", dependencies=[Depends(require_permissions("user:create"))])
+    """
+    async def permission_checker(
+        current_user: User = Depends(get_current_active_user)
+    ) -> User:
+        # Superuser bypasses all checks
+        if current_user.is_superuser:
+            return current_user
+
+        # Check each required permission
+        for perm in required_permissions:
+            if ":" not in perm:
+                raise ValueError(f"Invalid permission format: {perm}")
+
+            resource, action = perm.split(":", 1)
+            if not current_user.has_permission(resource, action):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Missing required permission: {perm}"
+                )
+
+        return current_user
+
+    return permission_checker
+
+
+def require_roles(*required_roles: str):
+    """
+    Dependency to check user roles.
+
+    Args:
+        *required_roles: Role names (e.g., "admin", "moderator")
+
+    Returns:
+        Dependency function
+
+    Example:
+        @router.post("/", dependencies=[Depends(require_roles("admin"))])
+    """
+    async def role_checker(
+        current_user: User = Depends(get_current_active_user)
+    ) -> User:
+        if not any(current_user.has_role(role) for role in required_roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Required role: {', '.join(required_roles)}"
+            )
+
+        return current_user
+
+    return role_checker

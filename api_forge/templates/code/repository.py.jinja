@@ -1,0 +1,95 @@
+"""
+{{ entity.name }} repository.
+
+Data access layer for {{ entity.name }} entity.
+"""
+
+from typing import Optional, List, Dict, Any
+from uuid import UUID
+from sqlalchemy import select, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from {{ app_name }}.models.{{ entity.name | lower }} import {{ entity.name }}
+from {{ app_name }}.repositories.base import BaseRepository
+
+
+class {{ entity.name }}Repository(BaseRepository[{{ entity.name }}]):
+    """Repository for {{ entity.name }} entity"""
+
+    def __init__(self, db: AsyncSession):
+        super().__init__({{ entity.name }}, db)
+
+    {% for method in custom_methods %}
+    async def {{ method.name }}(self{{ method.parameters }}) -> {{ method.return_type }}:
+        """{{ method.description }}"""
+        {{ method.body | indent(8) }}
+    {% endfor %}
+
+    {% if has_relationships %}
+    async def get_with_relations(
+        self,
+        id: UUID,
+        relations: Optional[List[str]] = None
+    ) -> Optional[{{ entity.name }}]:
+        """
+        Get {{ entity.name }} with related entities loaded.
+
+        Args:
+            id: {{ entity.name }} ID
+            relations: List of relationship names to load
+
+        Returns:
+            {{ entity.name }} with relations or None
+        """
+        query = select({{ entity.name }}).where({{ entity.name }}.id == id)
+
+        # Eager load specified relationships
+        if relations:
+            for rel in relations:
+                if hasattr({{ entity.name }}, rel):
+                    query = query.options(selectinload(getattr({{ entity.name }}, rel)))
+
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
+    {% endif %}
+
+    {% if searchable_fields %}
+    async def search(
+        self,
+        search_term: str,
+        skip: int = 0,
+        limit: int = 100
+    ) -> tuple[List[{{ entity.name }}], int]:
+        """
+        Search {{ entity.name }} entities.
+
+        Args:
+            search_term: Search term
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+
+        Returns:
+            Tuple of (results, total_count)
+        """
+        # Build search query
+        search_filter = False
+        {% for field in searchable_fields %}
+        search_filter = search_filter | {{ entity.name }}.{{ field }}.ilike(f"%{search_term}%")
+        {% endfor %}
+
+        query = select({{ entity.name }}).where(search_filter)
+
+        # Get total count
+        from sqlalchemy import func
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar_one()
+
+        # Get paginated results
+        query = query.offset(skip).limit(limit)
+        result = await self.db.execute(query)
+        items = result.scalars().all()
+
+        return items, total
+    {% endif %}

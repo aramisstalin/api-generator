@@ -1,0 +1,133 @@
+"""
+User model.
+
+Authentication and user management model.
+"""
+
+from sqlalchemy import Column, String, Boolean, Table, ForeignKey
+from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID
+
+from {{ app_name }}.db.base import BaseModel, Base
+
+# Association tables
+user_roles = Table(
+    'user_roles',
+    Base.metadata,
+    Column('user_id', UUID, ForeignKey('users.id'), primary_key=True),
+    Column('role_id', UUID, ForeignKey('roles.id'), primary_key=True)
+)
+
+
+class User(BaseModel):
+    """User account"""
+
+    __tablename__ = "users"
+
+    # Authentication
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+
+    # Profile
+    full_name = Column(String(255))
+
+    # Status
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_superuser = Column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    roles = relationship("Role", secondary=user_roles, back_populates="users")
+
+    @property
+    def permissions(self) -> set:
+        """Get all permissions from user roles"""
+        perms = set()
+        for role in self.roles:
+            perms.update(role.permissions)
+        return perms
+
+    def has_permission(self, resource: str, action: str) -> bool:
+        """
+        Check if user has specific permission.
+
+        Args:
+            resource: Resource name (e.g., "user", "product")
+            action: Action name (e.g., "create", "read", "update", "delete")
+
+        Returns:
+            True if user has permission
+        """
+        if self.is_superuser:
+            return True
+
+        return any(
+            p.resource == resource and p.action == action
+            for p in self.permissions
+        )
+
+    def has_role(self, role_name: str) -> bool:
+        """
+        Check if user has a specific role.
+
+        Args:
+            role_name: Name of the role
+
+        Returns:
+            True if user has role
+        """
+        return any(role.name == role_name for role in self.roles)
+
+    def __repr__(self) -> str:
+        return f"<User(id={self.id}, email={self.email})>"
+
+
+class Role(BaseModel):
+    """User role"""
+
+    __tablename__ = "roles"
+
+    name = Column(String(50), unique=True, nullable=False, index=True)
+    description = Column(String(255))
+    is_default = Column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    users = relationship("User", secondary=user_roles, back_populates="roles")
+    permissions = relationship(
+        "Permission",
+        secondary="role_permissions",
+        back_populates="roles"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Role(name={self.name})>"
+
+
+# Role-Permission association table
+role_permissions = Table(
+    'role_permissions',
+    Base.metadata,
+    Column('role_id', UUID, ForeignKey('roles.id'), primary_key=True),
+    Column('permission_id', UUID, ForeignKey('permissions.id'), primary_key=True)
+)
+
+
+class Permission(BaseModel):
+    """Permission for specific actions"""
+
+    __tablename__ = "permissions"
+
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    resource = Column(String(50), nullable=False, index=True)
+    action = Column(String(50), nullable=False, index=True)
+    description = Column(String(255))
+
+    # Relationships
+    roles = relationship(
+        "Role",
+        secondary=role_permissions,
+        back_populates="permissions"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Permission({self.resource}:{self.action})>"
