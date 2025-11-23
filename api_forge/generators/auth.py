@@ -15,6 +15,7 @@ from typing import Dict, Any, List
 from api_forge.generators.base import BaseGenerator
 from api_forge.generators.artifacts import CodeArtifact, ArtifactType, GenerationContext
 from api_forge.core.console import console
+from api_forge.schema_org import SchemaEntity
 
 
 class AuthGenerator(BaseGenerator):
@@ -28,6 +29,21 @@ class AuthGenerator(BaseGenerator):
     - Authentication dependencies
     - RBAC support
     """
+
+    def generate(
+            self,
+            entity: SchemaEntity,
+            context: GenerationContext
+    ) -> CodeArtifact:
+        """
+        Generate method required by BaseGenerator.
+
+        Note: AuthGenerator uses generate_all() instead.
+        This method is not used but required by the abstract base class.
+        """
+        raise NotImplementedError(
+            "AuthGenerator uses generate_all() method instead of generate()"
+        )
 
     def generate_all(
             self,

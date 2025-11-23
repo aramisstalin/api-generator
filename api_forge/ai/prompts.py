@@ -4,7 +4,7 @@ Prompt templates for AI-powered code generation.
 Contains carefully crafted prompts for different generation tasks.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 from api_forge.schema_org.models import SchemaEntity
 
 

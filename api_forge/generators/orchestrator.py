@@ -6,13 +6,11 @@ Coordinates all generators to produce complete, integrated code artifacts.
 
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-import asyncio
 
 from api_forge.ai.config import AIConfig
 from api_forge.generators.artifacts import (
     CodeArtifact,
     GenerationContext,
-    ArtifactType
 )
 from api_forge.generators.tests import TestGenerator
 from api_forge.generators.auth import AuthGenerator
@@ -21,7 +19,7 @@ from api_forge.generators.schemas import SchemaGenerator
 from api_forge.generators.repositories import RepositoryGenerator
 from api_forge.generators.services import ServiceGenerator
 from api_forge.generators.routers import RouterGenerator
-from api_forge.schema_org.models import SchemaEntity, EntityAnalysis
+from api_forge.schema_org.models import EntityAnalysis
 from api_forge.schema_org.analyzer import SchemaOrgAnalyzer
 from api_forge.core.config import ProjectConfig
 from api_forge.core.console import console
@@ -233,7 +231,8 @@ class GenerationOrchestrator:
 
         return artifacts
 
-    def _validate_artifacts(self, artifacts: List[CodeArtifact]) -> None:
+    @staticmethod
+    def _validate_artifacts(artifacts: List[CodeArtifact]) -> None:
         """
         Validate all generated artifacts.
 

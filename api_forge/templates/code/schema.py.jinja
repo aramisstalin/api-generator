@@ -18,12 +18,14 @@ class {{ entity.name }}Base(BaseModel):
 
     {% for field in base_fields %}
     {{ field.name }}: {{ field.type_annotation }}{% if field.has_default %} = {{ field.default }}{% endif %}
+
     {% endfor %}
 
     {% if validators %}
     # Field validators
     {% for validator in validators %}
     {{ validator.code }}
+
     {% endfor %}
     {% endif %}
 

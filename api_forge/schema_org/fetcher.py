@@ -9,7 +9,8 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
-from urllib.parse import urljoin
+
+from black import timezone
 
 from api_forge.core.exceptions import SchemaOrgError
 from api_forge.core.console import console
@@ -19,11 +20,11 @@ class SchemaOrgFetcher:
     """
     Fetches Schema.org entity definitions.
 
-    Downloads JSONLD definitions from schema.org and caches them locally
-    to avoid repeated network requests.
+    Downloads the complete Schema.org vocabulary and extracts entities.
+    Caches the vocabulary locally to avoid repeated network requests.
     """
 
-    BASE_URL = "https://schema.org"
+    VOCAB_URL = "https://schema.org/version/latest/schemaorg-all-https.jsonld"
     CACHE_TTL = timedelta(days=7)
 
     def __init__(self, cache_dir: Optional[Path] = None):
@@ -46,72 +47,146 @@ class SchemaOrgFetcher:
             }
         )
 
+        # Vocabulary cache
+        self._vocabulary: Optional[Dict[str, Any]] = None
+
+    async def _load_vocabulary(self, force_refresh: bool = False) -> Dict[str, Any]:
+        """Load the complete Schema.org vocabulary."""
+        if self._vocabulary and not force_refresh:
+            return self._vocabulary
+
+        cache_file = self.cache_dir / "schemaorg-vocabulary.json"
+        metadata_file = self.cache_dir / "schemaorg-vocabulary.meta"
+
+        # Check cache
+        if not force_refresh and cache_file.exists() and metadata_file.exists():
+            try:
+                metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+                cached_time = datetime.fromisoformat(metadata["cached_at"])
+
+                if datetime.now(timezone.utc) - cached_time <= self.CACHE_TTL:
+                    console.print("[dim]Using cached Schema.org vocabulary[/dim]")
+                    self._vocabulary = json.loads(cache_file.read_text(encoding="utf-8"))
+                    return self._vocabulary
+            except Exception:
+                pass
+
+        # Download vocabulary
+        console.print("[cyan]Downloading Schema.org vocabulary...[/cyan]")
+
+        try:
+            response = await self.client.get(self.VOCAB_URL)
+            response.raise_for_status()
+
+            self._vocabulary = response.json()
+
+            # Save to cache
+            cache_file.write_text(
+                json.dumps(self._vocabulary, indent=2),
+                encoding="utf-8"
+            )
+
+            metadata = {
+                "cached_at": datetime.now(timezone.utc).isoformat(),
+                "url": self.VOCAB_URL
+            }
+            metadata_file.write_text(
+                json.dumps(metadata, indent=2),
+                encoding="utf-8"
+            )
+
+            console.print("[green]✓[/green] Schema.org vocabulary downloaded")
+            return self._vocabulary
+
+        except Exception as e:
+            raise SchemaOrgError(
+                f"Failed to download Schema.org vocabulary: {e}",
+                details={"url": self.VOCAB_URL, "error": str(e)}
+            )
+
     async def fetch_entity(self, entity_name: str, force_refresh: bool = False) -> Dict[str, Any]:
         """
-        Fetch Schema.org entity definition.
+        Fetch Schema.org entity definition with its properties from vocabulary.
 
         Args:
             entity_name: Name of the Schema.org entity (e.g., "Person", "Organization")
-            force_refresh: Force refresh from schema.org, ignoring cache
+            force_refresh: Force refresh vocabulary from schema.org
 
         Returns:
-            Dictionary containing the JSONLD definition
+            Dictionary containing:
+            - @context: Schema.org context
+            - @graph: Full graph (for property resolution)
+            - entity: The class definition
+            - properties: List of properties that apply to this entity
 
         Raises:
-            SchemaOrgError: If entity cannot be fetched
+            SchemaOrgError: If entity cannot be found
         """
-        # Check cache first
-        if not force_refresh:
-            cached = self._get_from_cache(entity_name)
-            if cached:
-                console.print(f"[dim]Using cached definition for {entity_name}[/dim]")
-                return cached
+        # Load vocabulary
+        vocab = await self._load_vocabulary(force_refresh)
 
-        # Fetch from schema.org
-        console.print(f"[cyan]Fetching {entity_name} from Schema.org...[/cyan]")
-
-        try:
-            url = urljoin(self.BASE_URL, f"{entity_name}.jsonld")
-            response = await self.client.get(url)
-            response.raise_for_status()
-
-            data = response.json()
-
-            # Validate JSONLD structure
-            if not self._validate_jsonld(data):
-                raise SchemaOrgError(
-                    f"Invalid JSONLD structure for {entity_name}",
-                    details={"url": url}
-                )
-
-            # Save to cache
-            self._save_to_cache(entity_name, data)
-
-            console.print(f"[green]✓[/green] Successfully fetched {entity_name}")
-            return data
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                raise SchemaOrgError(
-                    f"Entity '{entity_name}' not found in Schema.org",
-                    details={"status_code": 404, "url": str(e.request.url)}
-                )
+        # Extract @graph
+        if "@graph" not in vocab:
             raise SchemaOrgError(
-                f"HTTP error fetching {entity_name}: {e}",
-                details={"status_code": e.response.status_code}
+                "Invalid Schema.org vocabulary structure",
+                details={"missing": "@graph"}
             )
 
-        except httpx.RequestError as e:
+        graph = vocab["@graph"]
+
+        # Find entity class in graph
+        entity_id = f"schema:{entity_name}"
+        entity_data = None
+
+        for item in graph:
+            if item.get("@id") == entity_id and item.get("@type") == "rdfs:Class":
+                entity_data = item
+                break
+
+        if not entity_data:
             raise SchemaOrgError(
-                f"Network error fetching {entity_name}: {e}",
-                details={"error": str(e)}
+                f"Entity '{entity_name}' not found in Schema.org vocabulary",
+                details={"entity_id": entity_id}
             )
 
-        except json.JSONDecodeError as e:
-            raise SchemaOrgError(
-                f"Invalid JSON in response for {entity_name}: {e}",
-                details={"error": str(e)}
-            )
+        # Find all properties that apply to this entity
+        entity_properties = []
+
+        for item in graph:
+            # Look for properties
+            item_type = item.get("@type")
+            if item_type not in ["rdf:Property", "schema:Property"]:
+                continue
+
+            # Check if this property applies to our entity
+            domain_includes = item.get("schema:domainIncludes", [])
+            if not isinstance(domain_includes, list):
+                domain_includes = [domain_includes]
+
+            # Check if our entity is in the domain
+            applies_to_entity = False
+            for domain in domain_includes:
+                if isinstance(domain, dict):
+                    domain_id = domain.get("@id", "")
+                else:
+                    domain_id = str(domain)
+
+                if domain_id == entity_id:
+                    applies_to_entity = True
+                    break
+
+            if applies_to_entity:
+                entity_properties.append(item)
+
+        console.print(f"[green]✓[/green] Found {entity_name} with {len(entity_properties)} properties")
+
+        # Return entity with its properties and full graph for reference
+        return {
+            "@context": vocab.get("@context", {}),
+            "@graph": graph,
+            "entity": entity_data,
+            "properties": entity_properties
+        }
 
     async def fetch_multiple(self, entity_names: list[str]) -> Dict[str, Dict[str, Any]]:
         """
@@ -148,7 +223,7 @@ class SchemaOrgFetcher:
             metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
             cached_time = datetime.fromisoformat(metadata["cached_at"])
 
-            if datetime.utcnow() - cached_time > self.CACHE_TTL:
+            if datetime.now(timezone.utc) - cached_time > self.CACHE_TTL:
                 # Cache expired
                 return None
 
@@ -174,7 +249,7 @@ class SchemaOrgFetcher:
             # Save metadata
             metadata = {
                 "entity_name": entity_name,
-                "cached_at": datetime.utcnow().isoformat(),
+                "cached_at": datetime.now(timezone.utc).isoformat(),
                 "ttl_days": self.CACHE_TTL.days
             }
             metadata_file.write_text(

@@ -131,7 +131,8 @@ class BaseGenerator(ABC):
         template = self.jinja_env.get_template(template_name)
         return template.render(**context)
 
-    def format_code(self, code: str) -> str:
+    @staticmethod
+    def format_code(code: str) -> str:
         """
         Format Python code using black.
 
@@ -160,7 +161,8 @@ class BaseGenerator(ABC):
             console.print(f"[yellow]⚠[/yellow] Code formatting failed: {e}")
             return code
 
-    def add_imports(self, code: str, imports: List[str]) -> str:
+    @staticmethod
+    def add_imports(code: str, imports: List[str]) -> str:
         """
         Add import statements to code.
 
@@ -192,8 +194,8 @@ class BaseGenerator(ABC):
 
         return '\n'.join(lines)
 
+    @staticmethod
     def write_artifact(
-            self,
             artifact: CodeArtifact,
             project_path: Path,
             force: bool = False
@@ -232,7 +234,8 @@ class BaseGenerator(ABC):
             artifact.mark_error()
             return False
 
-    def validate_artifact(self, artifact: CodeArtifact) -> bool:
+    @staticmethod
+    def validate_artifact(artifact: CodeArtifact) -> bool:
         """
         Validate generated artifact.
 

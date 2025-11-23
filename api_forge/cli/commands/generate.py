@@ -418,7 +418,7 @@ def _display_auth_next_steps(project_path: Path) -> None:
 
 1. Update configuration:
    • Add SECRET_KEY to .env (use: openssl rand -hex 32)
-   • Configure REFRESH_TOKEN_EXPIRE_DAYS
+   • Configure REFRESH_TOKEN_EXPIRE_SECONDS
    • Set RATE_LIMIT_ANONYMOUS and RATE_LIMIT_AUTHENTICATED
 
 2. Create database migration:

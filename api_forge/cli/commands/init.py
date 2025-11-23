@@ -25,7 +25,7 @@ console = Console()
 
 @app.command(name="project")
 def init_project(
-        name: str = typer.Argument(..., help="Project name (e.g., my-api)"),
+        name: str = typer.Argument(..., help="Project name (e.g., my-project)"),
         path: Optional[Path] = typer.Option(
             None,
             "--path",
@@ -177,6 +177,7 @@ def _init_git(project_path: Path) -> None:
             check=True,
             capture_output=True,
         )
+
         subprocess.run(
             ["git", "add", "."],
             cwd=project_path,
@@ -190,14 +191,14 @@ def _init_git(project_path: Path) -> None:
             capture_output=True,
         )
     except subprocess.CalledProcessError:
-        console.print("[yellow]⚠[/yellow] Git initialization failed (git may not be installed)")
+        console.print("[yellow]⚠[/yellow] Git initialization failed: verify git is installed and its configuration (user.name and user.email).")
     except FileNotFoundError:
         console.print("[yellow]⚠[/yellow] Git not found - skipping Git initialization")
 
 
 def _create_venv(project_path: Path) -> None:
     """Create virtual environment and install dependencies."""
-    venv_path = project_path / "venv"
+    venv_path = project_path / ".venv"
 
     try:
         # Create venv
@@ -210,15 +211,20 @@ def _create_venv(project_path: Path) -> None:
         # Determine pip path
         if sys.platform == "win32":
             pip_path = venv_path / "Scripts" / "pip.exe"
+            python_path = venv_path / "Scripts" / "python.exe"
         else:
             pip_path = venv_path / "bin" / "pip"
+            python_path = venv_path / "bin" / "python"
 
         # Upgrade pip
-        subprocess.run(
-            [str(pip_path), "install", "--upgrade", "pip"],
+        result = subprocess.run(
+            [str(python_path), "-m", "pip", "install", "--upgrade", "pip"],
             check=True,
             capture_output=True,
         )
+
+        if result.returncode != 0:
+            console.print(result.stderr)
 
         # Install requirements
         requirements_file = project_path / "requirements.txt"
@@ -240,9 +246,9 @@ def _display_next_steps(name: str, project_path: Path, skip_venv: bool) -> None:
 
     # Determine activation command
     if sys.platform == "win32":
-        activate_cmd = ".\\venv\\Scripts\\activate"
+        activate_cmd = ".\\.venv\\Scripts\\activate"
     else:
-        activate_cmd = "source venv/bin/activate"
+        activate_cmd = "source .venv/bin/activate"
 
     next_steps = f"""
 [bold cyan]Next Steps:[/bold cyan]
