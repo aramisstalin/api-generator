@@ -145,7 +145,8 @@ class ModelGenerator(BaseGenerator):
             # Fallback to Text if no type info
             sql_type = "String(255)"
         else:
-            sql_type = type_info.sql_type.replace("sa.", "")
+            sql_type = type_info.get('python_type')
+            # sql_type = type_info.sql_type.replace("sa.", "")
 
         return {
             "name": prop.name,

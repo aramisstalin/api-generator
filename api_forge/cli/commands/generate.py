@@ -9,7 +9,7 @@ import asyncio
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.prompt import Confirm
+# from rich.prompt import Confirm
 from pathlib import Path
 from typing import List, Optional
 

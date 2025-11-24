@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from api_forge.ai.config import AIConfig
+from api_forge.analyzer_factory import AnalyzerFactory
 from api_forge.generators.artifacts import (
     CodeArtifact,
     GenerationContext,
@@ -119,7 +120,7 @@ class GenerationOrchestrator:
                 details={"entity": entity_name, "error": str(e)}
             )
 
-    async def generate_multiple(
+    async def generate_all(
             self,
             entity_names: List[str],
             force: bool = False
@@ -164,6 +165,33 @@ class GenerationOrchestrator:
             analysis = await analyzer.analyze_entity(entity_name, use_ai=use_ai)
 
         return analysis
+        """
+        # Auto-detect analyzer type from file extension
+        analyzer = AnalyzerFactory.create(
+            source=source,  # .json → JSON analyzer, None → Schema.org
+            analyzer_type=AnalyzerType.AUTO,
+            ai_config=AIConfig(api_key="your-api-key")
+        )
+
+        async with analyzer:
+            # Works for both types!
+            if isinstance(source, Path) and source.exists():
+                # JSON metadata
+                analyses = await analyzer.analyze_all(use_ai=True)
+                config = analyzer.get_generation_config()
+            else:
+                # Schema.org
+                analyses = await analyzer.analyze_multiple(
+                    ["Person", "Organization"],
+                    use_ai=True
+                )
+                config = {
+                    "app": {
+                        "name": "GeneratedApp",
+                        "version": "1.0.0"
+                    }
+                }
+            """
 
     async def _generate_all_artifacts(
             self,
@@ -444,6 +472,95 @@ class GenerationOrchestrator:
             raise CodeGenerationError(
                 f"Failed to generate authentication system: {e}",
                 details={"error": str(e)}
+            )
+
+# ============================== << new code     >> ==============================
+    async def generate_all_new(
+            self,
+            entities_analysis: Dict[str, EntityAnalysis],
+            force: bool = False
+    ) -> Dict[str, List[CodeArtifact]]:
+        """
+        Generate artifacts for multiple entities.
+
+        Args:
+            entities_analysis: List of analyzed entities
+            force: Force overwrite existing files
+
+        Returns:
+            Dictionary mapping entity names to their artifacts
+        """
+        results = {}
+
+        for entity_name, entity_analysis in entities_analysis.items():
+            try:
+                artifacts = await self.generate_entity_new(entity_analysis, force)
+                results[entity_name] = artifacts
+            except CodeGenerationError as e:
+                console.print(f"[red]✗[/red] Failed to generate {entity_name}: {e.message}")
+                continue
+
+        return results
+
+    async def generate_entity_new(
+            self,
+            analysis: EntityAnalysis,
+            force: bool = False,
+            write_files: bool = True
+    ) -> List[CodeArtifact]:
+        """
+        Generate complete CRUD application artifacts for an entity.
+
+        Args:
+            analysis: Analysis of an entity
+            force: Force overwrite existing files
+            write_files: Write artifacts to disk
+
+        Returns:
+            List of generated artifacts
+
+        Raises:
+            CodeGenerationError: If generation fails
+        """
+        entity_name = analysis.entity.name
+        console.print(f"\n[bold cyan]🔨 Generating artifacts for:[/bold cyan] [bold]{entity_name}[/bold]\n")
+
+        try:
+            # Step 1: Analyze Schema.org entity (with AI)
+            # Already provided as argument
+            # analysis = await self._analyze_entity(entity_name)
+
+            # Step 2: Create generation context
+            context = GenerationContext(
+                project_path=self.project_path,
+                app_name=self.app_name,
+                entity_name=entity_name,
+                config=self.config
+            )
+
+            # Step 3: Generate all artifacts
+            artifacts = await self._generate_all_artifacts(analysis, context)
+
+            # Step 4: Validate artifacts
+            self._validate_artifacts(artifacts)
+
+            # Step 5: Write to disk if requested
+            if write_files:
+                self._write_artifacts(artifacts, force)
+
+            # Step 6: Update router registry
+            if write_files:
+                self._update_router_registry(entity_name)
+
+            console.print(
+                f"\n[bold green]✓[/bold green] Successfully generated {len(artifacts)} files for {entity_name}")
+
+            return artifacts
+
+        except Exception as e:
+            raise CodeGenerationError(
+                f"Failed to generate entity {entity_name}: {e}",
+                details={"entity": entity_name, "error": str(e)}
             )
 
 __all__ = ["GenerationOrchestrator"]

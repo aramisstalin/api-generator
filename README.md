@@ -2,6 +2,28 @@
 
 🔨 Enterprise-grade FastAPI application generator from Schema.org definitions with AI enhancement.
 
+## Installation
+```bash
+# Navigate to the API Forge directory
+cd C:\api-forge
+
+# Install in development mode
+pip install -e .
+
+# Install development dependencies
+pip install -r requirements-dev.txt
+
+# **Expected Output:**
+
+Successfully installed api-forge
+
+#Verify Installation:
+api-forge --version
+
+api-forge info
+```
+
+
 ## Overview
 
 API Forge automatically generates production-ready FastAPI applications with:
@@ -23,7 +45,7 @@ pip install -e .
 
 ### Create a New Project
 ```bash
-api-forge init my-api --path ./projects
+api-forge init project my-api --path ./projects
 cd projects/my-api
 ```
 

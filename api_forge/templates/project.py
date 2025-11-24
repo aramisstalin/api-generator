@@ -314,28 +314,44 @@ Thumbs.db
     def _create_requirements(self) -> None:
         """Create requirements.txt file."""
         content = """# Core Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+fastapi==0.121.3
+uvicorn[standard]==0.38.0
+pydantic==2.12.4
+pydantic-settings==2.12.0
 
 # Database
-sqlalchemy==2.0.23
-asyncpg==0.29.0
-alembic==1.12.1
-psycopg2-binary==2.9.9
+sqlalchemy==2.0.44
+asyncpg==0.30.0
+alembic==1.17.2
+psycopg2-binary==2.9.11
 
 # Security
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
-cryptography==41.0.7
+python-multipart==0.0.20
+cryptography==46.0.3
 
 # HTTP Client
-httpx==0.25.2
+httpx==0.28.1
 
 # Caching
-redis==5.0.1
+redis==7.1.0
+
+# CLI
+typer[all]==0.20.0
+rich==14.2.0
+
+# Templates
+jinja2==3.1.6
+
+# Configuration
+pyyaml==6.0.3
+
+# AI Integration
+anthropic==0.74.0
+
+# Async Support
+aiofiles==25.1.0
 
 # Utilities
 python-dotenv==1.0.0
@@ -347,19 +363,24 @@ python-dotenv==1.0.0
         content = """-r requirements.txt
 
 # Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
-faker==20.1.0
+pytest==9.0.1
+pytest-asyncio==1.3.0
+pytest-cov==7.0.0
+faker==38.2.0
 
 # Code Quality
-black==23.11.0
-isort==5.12.0
-ruff==0.1.6
-mypy==1.7.0
+black==25.11.0
+isort==7.0.0
+ruff==0.14.5
+mypy==1.18.2
 
 # Security
-bandit==1.7.5
+bandit==1.9.1
+safety==3.7.0
+
+# Type Stubs
+types-pyyaml==6.0.12.20250915
+types-redis==4.6.0.20241004
 """
         (self.project_path / "requirements-dev.txt").write_text(content, encoding="utf-8")
 

@@ -9,15 +9,19 @@ from typing import Dict, List, Optional
 from api_forge.schema_org.models import (
     SchemaEntity,
     SchemaProperty,
-    PropertyType,
-    Relationship,
-    ValidationRule,
+    RelationshipInfo,
+    # ValidationRule,
     EntityAnalysis
+)
+from api_forge.schema_org.property_type import (
+    PropertyType,
+    JSON_TYPE_MAPPING,
+    get_property_type
 )
 from api_forge.json_metadata.loader import (
     EntityMetadata,
     FieldMetadata,
-    RelationshipMetadata,
+    # RelationshipMetadata,
     JSONMetadata
 )
 from api_forge.core.console import console
@@ -30,26 +34,6 @@ class JSONToEntityConverter:
     Bridges the gap between JSON metadata and the internal
     entity model used by generators.
     """
-
-    # Type mapping from JSON types to PropertyType
-    TYPE_MAPPING = {
-        "string": PropertyType.STRING,
-        "text": PropertyType.TEXT,
-        "int": PropertyType.INTEGER,
-        "bigint": PropertyType.INTEGER,
-        "uuid": PropertyType.UUID,
-        "boolean": PropertyType.BOOLEAN,
-        "decimal": PropertyType.DECIMAL,
-        "float": PropertyType.FLOAT,
-        "date": PropertyType.DATE,
-        "datetime": PropertyType.DATETIME,
-        "time": PropertyType.TIME,
-        "jsonb": PropertyType.JSON,
-        "json": PropertyType.JSON,
-        "uuid[]": PropertyType.ARRAY,
-        "string[]": PropertyType.ARRAY,
-        "int[]": PropertyType.ARRAY,
-    }
 
     def __init__(self):
         """Initialize converter."""
@@ -110,7 +94,7 @@ class JSONToEntityConverter:
             description=entity_meta.description,
             properties={},
             parent_types=[],
-            child_types=[],
+            sub_types=[],
             relationships=[],
             validation_rules={},
         )
@@ -128,7 +112,7 @@ class JSONToEntityConverter:
             "permissions": entity_meta.permissions,
             "composite_primary_key": entity_meta.composite_primary_key,
             "indexes": entity_meta.indexes or [],
-            "endpoints": entity_meta.endpoints.dict(),
+            "endpoints": entity_meta.endpoints.model_dump(),
             "seed": entity_meta.seed or [],
         }
 
@@ -144,26 +128,22 @@ class JSONToEntityConverter:
         Returns:
             SchemaProperty object
         """
-        # Determine property type
-        prop_type = self.TYPE_MAPPING.get(
-            field_meta.type.lower(),
-            PropertyType.STRING
-        )
+        # Determine property type using the global mapping
+        # get_property_type handles both exact matches and fallbacks
+        try:
+            prop_type = get_property_type(field_meta.type)
+        except ValueError:
+            # Fallback to STRING for unknown types
+            console.print(f"[yellow]Warning: Unknown type '{field_meta.type}', using STRING[/yellow]")
+            prop_type = PropertyType.STRING
 
-        # Build range info
+        # Build range info - include original type string
         range_includes = []
-        if field_meta.type in self.TYPE_MAPPING:
+        if field_meta.type.lower() in JSON_TYPE_MAPPING:
             range_includes.append(field_meta.type)
 
-        prop = SchemaProperty(
-            name=field_meta.name,
-            description=field_meta.description or "",
-            range_includes=range_includes,
-            required=not field_meta.nullable,
-        )
-
         # Store type info
-        prop.type_info = {  # type: ignore
+        type_info = {  # type: ignore
             "property_type": prop_type,
             "python_type": self._get_python_type(field_meta),
             "is_array": field_meta.type.endswith("[]"),
@@ -171,7 +151,7 @@ class JSONToEntityConverter:
         }
 
         # Store field metadata
-        prop.field_metadata = {  # type: ignore
+        metadata = {  # type: ignore
             "primary": field_meta.primary,
             "auto_increment": field_meta.auto_increment,
             "unique": field_meta.unique,
@@ -186,6 +166,18 @@ class JSONToEntityConverter:
             "validation": field_meta.validation,
             "frontend": field_meta.frontend,
         }
+
+        prop = SchemaProperty(
+            name=field_meta.name,
+            description=field_meta.description or "",
+            expected_types=[],
+            domain_includes=[],
+            range_includes=range_includes,
+            required=not field_meta.nullable,
+            type_info=type_info,
+            field_metadata=metadata,
+            multiple=False
+        )
 
         return prop
 
@@ -226,10 +218,10 @@ class JSONToEntityConverter:
         return base_type
 
     def _convert_relationships(
-            self,
-            entity_meta: EntityMetadata,
-            entity: SchemaEntity
-    ) -> List[Relationship]:
+        self,
+        entity_meta: EntityMetadata,
+        entity: SchemaEntity
+    ) -> List[RelationshipInfo]:
         """
         Convert relationship metadata to Relationship objects.
 
@@ -243,13 +235,13 @@ class JSONToEntityConverter:
         relationships = []
 
         for rel_meta in entity_meta.relationships:
-            rel = Relationship(
-                name=rel_meta.name,
+            rel = RelationshipInfo(
                 type=rel_meta.type,
                 target_entity=rel_meta.target,
                 source_entity=entity.name,
-                source_property=rel_meta.local_field,
-                target_property=rel_meta.remote_field,
+                property_name=rel_meta.local_field or None,
+                foreign_key=rel_meta.remote_field or None,
+                name=rel_meta.name or None,
             )
 
             # Store additional metadata

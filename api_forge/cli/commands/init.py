@@ -230,7 +230,7 @@ def _create_venv(project_path: Path) -> None:
         requirements_file = project_path / "requirements.txt"
         if requirements_file.exists():
             subprocess.run(
-                [str(pip_path), "install", "-r", str(requirements_file)],
+                [str(pip_path), "install", "-r", str(requirements_file), " --trusted-host pypi.org --trusted-host files.pythonhosted.org"],
                 check=True,
                 capture_output=True,
             )

@@ -9,7 +9,7 @@ from rich.console import Console
 from pathlib import Path
 
 from api_forge import __version__
-from api_forge.cli.commands import init, generate, migrate, serve, test
+from api_forge.cli.commands import init, generate, migrate, serve, test, json_generate
 
 # Initialize Typer app
 app = typer.Typer(
@@ -107,7 +107,7 @@ def info() -> None:
 # Register command groups
 app.add_typer(init.app, name="init")
 app.add_typer(generate.app, name="generate")
-app.add_typer(json_generate.app, name="json_generate")
+app.add_typer(json_generate.app, name="generate")
 app.add_typer(migrate.app, name="migrate")
 app.add_typer(serve.app, name="serve")
 app.add_typer(test.app, name="test")

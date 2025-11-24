@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from api_forge.core.exceptions import ValidationError
 from api_forge.core.console import console
+from api_forge.schema_org.models import RelationshipType
 
 
 class AppMetadata(BaseModel):
@@ -47,10 +48,10 @@ class FieldMetadata(BaseModel):
 
 class RelationshipMetadata(BaseModel):
     """Relationship definition from JSON."""
-    type: str  # one-to-one, one-to-many, many-to-one, many-to-many, self-referencing
-    target: str
-    local_field: Optional[str] = None
-    remote_field: Optional[str] = None
+    type: RelationshipType  # one-to-one, one-to-many, many-to-one, many-to-many, self-referencing
+    target: str # target table/entity name
+    local_field: Optional[str] = None # field in local entity
+    remote_field: Optional[str] = None # field in target entity
     via: Optional[str] = None  # For many-to-many join table
     name: str
     eager_load: bool = False
@@ -62,6 +63,7 @@ class EndpointMetadata(BaseModel):
     """Endpoint configuration from JSON."""
     base_path: str
     crud: bool = True
+    # search: bool = False
     search: Optional[Dict[str, Any]] = None
     bulk: Optional[Dict[str, Any]] = None
     extra: Optional[Dict[str, Any]] = None

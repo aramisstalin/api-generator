@@ -25,8 +25,8 @@ app = typer.Typer(
 )
 
 
-@app.command("generate")
-def generate(
+@app.command(name="from-json")
+def generate_entities_from_json(
         metadata_file: Path = typer.Argument(
             ...,
             help="Path to JSON metadata file",
@@ -131,9 +131,6 @@ async def _generate_async(
     else:
         console.print(f"[dim]📝 Template-based generation (no AI)[/dim]\n")
 
-    # Create orchestrator
-    orchestrator = GenerationOrchestrator(output_dir, config, ai_config)
-
     # Create analyzer
     try:
         analyzer = AnalyzerFactory.create(
@@ -178,7 +175,8 @@ async def _generate_async(
             # Create orchestrator
             generator = GenerationOrchestrator(output_dir, config, ai_config)
 
-            await generator.generate_all(analyses)
+            # Generate all entities artifacts
+            await generator.generate_all_new(analyses)
 
             console.print(f"\n[green]✓ Generation complete![/green]")
             console.print(f"\nYour FastAPI application is ready at: [bold]{output_dir}[/bold]")
