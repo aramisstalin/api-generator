@@ -141,17 +141,22 @@ def init_project(
             project_template.generate_config_files()
             progress.update(task3, completed=True)
 
-            # Task 4: Initialize Git
-            if not skip_git:
-                task4 = progress.add_task("Initializing Git repository...", total=None)
-                _init_git(project_path)
-                progress.update(task4, completed=True)
+            # Task 4: Create common files
+            task4 = progress.add_task("Creating common files...", total=None)
+            project_template.generate_common_files()
+            progress.update(task4, completed=True)
 
-            # Task 5: Create virtual environment
-            if not skip_venv:
-                task5 = progress.add_task("Creating virtual environment...", total=None)
-                _create_venv(project_path)
+            # Task 5: Initialize Git
+            if not skip_git:
+                task5 = progress.add_task("Initializing Git repository...", total=None)
+                _init_git(project_path)
                 progress.update(task5, completed=True)
+
+            # Task 6: Create virtual environment
+            if not skip_venv:
+                task6 = progress.add_task("Creating virtual environment...", total=None)
+                _create_venv(project_path)
+                progress.update(task6, completed=True)
 
         # Success message
         console.print(f"\n[bold green]✓[/bold green] Project initialized successfully!\n")

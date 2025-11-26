@@ -7,7 +7,7 @@ Downloads and caches Schema.org entity definitions in JSONLD format.
 import httpx
 import json
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
 from black import timezone

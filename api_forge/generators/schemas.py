@@ -142,9 +142,9 @@ class SchemaGenerator(BaseGenerator):
         Returns:
             Pydantic type string
         """
-        base_type = type_info.pydantic_annotation
+        base_type = type_info.get("python_type", None) or type_info.get("property_type", None)  # type_info.pydantic_annotation
 
-        if type_info.is_optional or not prop.required:
+        if type_info.get("is_optional", None) or not prop.required:
             if not base_type.startswith("Optional["):
                 return f"Optional[{base_type}]"
 
