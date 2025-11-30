@@ -38,7 +38,7 @@ class ProjectTemplate:
             f"{self.app_name}/core",
             f"{self.app_name}/core/endpoints",
             f"{self.app_name}/core/helpers",
-            f"{self.app_name}/core/middleware",
+            f"{self.app_name}/core/middlewares",
             f"{self.app_name}/core/models",
             f"{self.app_name}/core/repositories",
             f"{self.app_name}/core/schemas",
@@ -127,7 +127,6 @@ class ProjectTemplate:
 
         # Core configuration module
         self._create_core_config()
-        self._create_preflight_middleware()
 
         # Database session module
         self._create_db_session()
@@ -137,6 +136,22 @@ class ProjectTemplate:
 
         # Pytest conftest.py
         self._create_conftest()
+
+    def generate_middleware_files(self) -> None:
+        # Create __init__.py
+        self._create_middlewares_init()
+
+        # Create headers middleware
+        self._create_headers_middleware()
+
+        # Create logging middleware
+        self._create_logging_middleware()
+
+        # Create preflight middleware
+        self._create_preflight_middleware()
+
+        # Create rate limiter middleware
+        self._create_rate_limiter_middleware()
 
     def generate_common_files(self) -> None:
         """Generate common project files and basic classes that will be used by others in the project."""
@@ -412,6 +427,7 @@ types-redis==4.6.0.20241004
 PROJECT_NAME="{self.config.name}"
 VERSION="{self.config.version}"
 ENVIRONMENT=development
+DEBUG=True
 
 # API
 API_STR=/api/v1
@@ -422,6 +438,15 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_SECONDS=900  # 15 minutes
 REFRESH_TOKEN_EXPIRE_DAYS=7  # 7 days
 RATE_LIMIT_PER_MINUTE=10  # 10 requests per minute
+
+# Middleware config
+FAILURE_THRESHOLD=100
+RECOVERY_TIMEOUT=20
+REQUEST_TIMEOUT=20
+HTTPX_MAX_KEEPALIVE=60
+HTTPX_MAX_CONNECTIONS=10
+HTTPX_KEEPALIVE_EXPIRY=10
+HTTPX_VERIFY_SSL=True
 
 # Email
 EMAILS_FROM_EMAIL=from.company.email@example.com
@@ -456,12 +481,15 @@ This module initializes the FastAPI application with all necessary
 configurations, middleware, and route handlers.
 """
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import traceback
 from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from {self.app_name}.core.services import get_http_client_manager
+from {self.app_name}.core.middlewares import security_headers_middleware, request_logging_middleware, rate_limit_exceeded_handler, CORSPreflightMiddleware
 from {self.app_name}.core.config import settings
-from {self.app_name}.core.middleware.preflight import CORSPreflightMiddleware
 from {self.app_name}.api.v1.router import api_router
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -469,7 +497,11 @@ from slowapi.util import get_remote_address
 
 import logging
 
-# Configure module logger
+# Config logging
+logging.basicConfig(
+    level=logging.INFO if not settings.DEBUG else logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Configure rate limiter
@@ -478,34 +510,56 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan events."""
-    # Startup
-    print("🚀 Application starting up...")
+    """
+    Handles application startup and shutdown events, ensuring external resources
+    like the HTTP client pool are initialized and cleaned up properly.
+    """
+    logger.info("🚀 Application starting up...")
+    manager = get_http_client_manager()
+    logger.info("Initializing HTTP Client Pool...")
+    await manager.initialize()
+    
     yield
+    
     # Shutdown
-    print("👋 Application shutting down...")
+    logger.info("Closing HTTP Client Pool...")
+    await manager.close()
+    logger.info("👋 Application shutting down...")
 
 
 # Create FastAPI application
 app = FastAPI(
     title=settings.PROJECT_NAME,
+    debug=settings.DEBUG,
     version=settings.VERSION,
+    lifespan=lifespan,
     openapi_url=f"{{settings.API_STR}}/openapi.json",
     docs_url=f"{{settings.API_STR}}/docs",
     redoc_url=f"{{settings.API_STR}}/redoc",
-    lifespan=lifespan,
 )
 
 # Add rate limiter state to app
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Security headers middleware
+app.middleware("http")(security_headers_middleware)
+
+# Request logging middleware
+app.middleware("http")(request_logging_middleware)
+
+# Preflight middleware
 app.add_middleware(CORSPreflightMiddleware)
 
-# Configure CORS
+ALLOWED_ORIGINS = [
+    "http://localhost:4200",
+    "http://localhost:3000"
+]
+
+# Configure CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     allow_headers=["*"],
@@ -513,15 +567,51 @@ app.add_middleware(
     max_age=600,  # Cache preflight requests for 10 minutes
 )
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Global exception handler with security considerations.
+    """
+    tb = traceback.format_exc()
+
+    # Log the full error server-side
+    logger.error(f"Unhandled exception: {{exc}}", exc_info=True)
+
+    # In production, don't expose traceback to clients
+    response_content = {{
+        "status": "error",
+        "error_type": exc.__class__.__name__,
+        "message": str(exc),
+    }}
+
+    # Only include traceback in development
+    if settings.ENVIRONMENT.capitalize != "PRODUCTION" and settings.ENVIRONMENT.capitalize != "PROD":
+        response_content["traceback"] = tb
+
+    return JSONResponse(
+        status_code=500,
+        content=response_content,
+    )
+    
+# Exception handlers
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)    
+
 # Include API router
 app.include_router(api_router, prefix=settings.API_STR)
 
 
-@app.get("/health")
+@app.get("/health", tags=["Root"])
 async def health_check():
     """Health check endpoint."""
     return {{"status": "healthy", "service": settings.PROJECT_NAME}}
 
+@app.get("/", tags=["Root"])
+async def root():
+    """Root endpoint"""
+    return {{
+        "message": f"{{settings.PROJECT_NAME}} API",
+        "docs": f"{{settings.API_STR}}/docs" if settings.DEBUG else "disabled"
+    }}
 
 if __name__ == "__main__":
     import uvicorn
@@ -529,6 +619,26 @@ if __name__ == "__main__":
 '''
         main_path = self.project_path / self.app_name / "main.py"
         main_path.write_text(content, encoding="utf-8")
+
+    def _create_middlewares_init(self) -> None:
+        """Create __init__.py in middlewares folder."""
+        content = f'''"""
+Middleware package.
+"""
+
+from .headers_middleware import security_headers_middleware
+from .logging_middleware import request_logging_middleware
+from .preflight_middleware import CORSPreflightMiddleware
+from .rate_limiter_middleware import rate_limit_exceeded_handler
+
+__all__ = [
+    "security_headers_middleware",
+    "request_logging_middleware",
+    "CORSPreflightMiddleware",
+    "rate_limit_exceeded_handler",
+]'''
+        middlewares_init_path = self.project_path / self.app_name / "core" / "middlewares" / "__init__.py"
+        middlewares_init_path.write_text(content, encoding="utf-8")
 
     def _create_preflight_middleware(self) -> None:
         """Create preflight middleware configuration file."""
@@ -559,8 +669,85 @@ class CORSPreflightMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         return response'''
 
-        main_path = self.project_path / self.app_name / "core" / "middleware" / "preflight.py"
+        main_path = self.project_path / self.app_name / "core" / "middlewares" / "preflight_middleware.py"
         main_path.write_text(content, encoding="utf-8")
+
+    def _create_headers_middleware(self) -> None:
+        """Create headers middleware configuration file."""
+        content = f'''from fastapi import Request
+from typing import Callable
+
+
+async def security_headers_middleware(request: Request, call_next: Callable):
+    """Add security headers to all responses"""
+    response = await call_next(request)
+    
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = (
+        "img-src 'self' data: https:; "
+        "font-src 'self'; "
+        "frame-ancestors 'none';"
+    )
+    #    "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com; "
+    #    "default-src 'self'; "
+    #    "style-src 'self' 'unsafe-inline'; "
+    #    "script-src 'self' https://accounts.google.com; "
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    
+    return response'''
+
+        headers_middleware_path = self.project_path / self.app_name / "core" / "middlewares" / "headers_middleware.py"
+        headers_middleware_path.write_text(content, encoding="utf-8")
+
+    def _create_logging_middleware(self) -> None:
+        """Create logging middleware configuration file."""
+        content = f'''from fastapi import Request
+import time
+from typing import Callable
+
+
+async def request_logging_middleware(request: Request, call_next: Callable):
+    """Log all requests for monitoring"""
+    start_time = time.time()
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Calculate duration
+    duration = time.time() - start_time
+    
+    # Log request details (in production, use proper logging framework)
+    print(f"[{{request.method}}] {{request.url.path}} - {{response.status_code}} - {{duration:.3f}}s")
+    
+    return response'''
+
+        logging_middleware_path = self.project_path / self.app_name / "core" / "middlewares" / "logging_middleware.py"
+        logging_middleware_path.write_text(content, encoding="utf-8")
+
+    def _create_rate_limiter_middleware(self) -> None:
+        """Create rate limiter middleware configuration file."""
+        content = f'''from fastapi import Request, status
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+
+
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """Custom handler for rate limit exceeded"""
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={{
+            "detail": "Rate limit exceeded. Please try again later.",
+            "retry_after": exc.retry_after if hasattr(exc, 'retry_after') else 60
+        }}
+    )'''
+
+        rate_limiter_middleware_path = self.project_path / self.app_name / "core" / "middlewares" / "rate_limiter_middleware.py"
+        rate_limiter_middleware_path.write_text(content, encoding="utf-8")
 
     def _create_dockerfile(self) -> None:
         """Create Dockerfile."""
@@ -675,9 +862,11 @@ volumes:
 
 [alembic]
 script_location = alembic
+file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
 prepend_sys_path = .
-version_path_separator = os
-sqlalchemy.url = postgresql+asyncpg://postgres:password@localhost:5432/{self.config.database.name}
+path_separator = os
+output_encoding = utf-8
+sqlalchemy.url = driver+asyncpg://user:pass@localhost:5432/dbname
 
 [post_write_hooks]
 
@@ -691,12 +880,12 @@ keys = console
 keys = generic
 
 [logger_root]
-level = WARN
+level = WARNING
 handlers = console
 qualname =
 
 [logger_sqlalchemy]
-level = WARN
+level = WARNING
 handlers =
 qualname = sqlalchemy.engine
 
@@ -719,33 +908,43 @@ datefmt = %H:%M:%S
 
     def _create_alembic_env(self) -> None:
         """Create alembic/env.py."""
-        content = f"""from logging.config import fileConfig
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
-from alembic import context
+        content = f'''
 import asyncio
-import os
-import sys
-
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+from alembic import context
+from dotenv import load_dotenv
+from logging.config import fileConfig
+from pathlib import Path
+from sqlalchemy.ext.asyncio import create_async_engine
 from {self.app_name}.core.config import settings
-from {self.app_name}.db.base import Base
+from {self.app_name}.core.models import BaseModel
+
+# Load .env from project root (where alembic.ini is located)
+env_path = Path(__file__).resolve().parent.parent / '.env'
+load_dotenv(env_path)
 
 config = context.config
 
-# Override sqlalchemy.url with our DATABASE_URL
+# Set up database url dynamically
 config.set_main_option("sqlalchemy.url", str(settings.DATABASE_URL))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = BaseModel.metadata
 
 
 def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode.
+
+    This configures the context with just a URL
+    and not an Engine, though an Engine is acceptable
+    here as well.  By skipping the Engine creation
+    we don't even need a DBAPI to be available.
+
+    Calls to context.execute() here emit the given string to the
+    script output.
+
+    """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -758,35 +957,34 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+async def run_migrations_online() -> None:
+    """Run migrations in 'online' mode.
 
-    with context.begin_transaction():
-        context.run_migrations()
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
 
+    """
 
-async def run_async_migrations() -> None:
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {{}}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
+    connectable = create_async_engine(
+        config.get_main_option("sqlalchemy.url"),
+        future=True
     )
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
 
-    await connectable.dispose()
-
-
-def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+def do_run_migrations(connection) -> None:
+    """Perform schema migrations."""
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 if context.is_offline_mode():
-    run_migrations_offline()
+    asyncio.run(run_migrations_offline())
 else:
-    run_migrations_online()
-"""
+    asyncio.run(run_migrations_online())
+'''
         env_path = self.project_path / "alembic" / "env.py"
         env_path.write_text(content, encoding="utf-8")
 
@@ -867,6 +1065,7 @@ class Settings(BaseSettings):
     VERSION: str = os.getenv("VERSION", "{self.config.version}")
     API_STR: str = os.getenv("API_STR", "/api/v1")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    DEBUG: bool = os.getenv("DEBUG", False)
 
     # --- Security & JWT Configuration ---
     # To generate a good secret key: openssl rand -hex 32
@@ -875,22 +1074,21 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_SECONDS: int = os.getenv("ACCESS_TOKEN_EXPIRE_SECONDS", 900)  # 15 minutes
     REFRESH_TOKEN_EXPIRE_DAYS: int = os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", 7)  # 7 days
     RATE_LIMIT_PER_MINUTE: int = os.getenv("RATE_LIMIT_PER_MINUTE", 10)  # 10 requests per minute
+    HTTPX_MAX_KEEPALIVE: int = os.getenv("HTTPX_MAX_KEEPALIVE", 60)
+    HTTPX_MAX_CONNECTIONS: int = os.getenv("HTTPX_MAX_CONNECTIONS", 10)
+    HTTPX_KEEPALIVE_EXPIRY: int = os.getenv("HTTPX_KEEPALIVE_EXPIRY", 10)
+    HTTPX_VERIFY_SSL: bool = os.getenv("HTTPX_VERIFY_SSL", False)
+    
+    # Middlewares config
+    FAILURE_THRESHOLD: int = os.getenv("FAILURE_THRESHOLD", 100)
+    RECOVERY_TIMEOUT: int = os.getenv("FAILURE_THRESHOLD", 20)
+    REQUEST_TIMEOUT: int = os.getenv("FAILURE_THRESHOLD", 20)
     
     # --- Email Configuration ---
     EMAILS_FROM_EMAIL: str = os.getenv("EMAILS_FROM_EMAIL")
     EMAILS_FROM_NAME: str = os.getenv("EMAILS_FROM_NAME")
     SMTP_HOST: str = os.getenv("SMTP_HOST")
     SMTP_PORT: int = os.getenv("SMTP_PORT")
-
-    # CORS
-    ALLOWED_ORIGINS: List[str] = os.getenv("ALLOWED_ORIGINS", ["http://localhost:4200", "http://localhost:3000"]) # comma-separated list with angular and react dev servers as default, adjust as needed
-
-    @field_validator("ALLOWED_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v):
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
 
     # Database
     POSTGRES_SERVER: str = os.getenv("POSTGRES_SERVER", "{self.config.database.host}")
@@ -1049,8 +1247,9 @@ Aggregates all API endpoints for version 1.
 """
 
 from fastapi import APIRouter
+from {self.app_name}.core.config import settings
 
-api_router = APIRouter()
+api_router = APIRouter(tags=["API"])
 
 # Import and include endpoint routers here as they are generated
 # Example:
@@ -1062,7 +1261,7 @@ api_router = APIRouter()
 async def root():
     """API root endpoint."""
     return {{
-        "message": "Welcome to {{settings.PROJECT_NAME}} API",
+        "message": f"Welcome to {{settings.PROJECT_NAME}} API",
         "version": "1.0.0",
         "docs": "/api/v1/docs"
     }}
@@ -2479,8 +2678,8 @@ Services package to provide general services.
 from .cep_service import fetch_address_by_cep
 from .circuit_breaker_service import get_circuit_breaker
 from .email_service import send_email, send_reset_password_email, send_verification_email
-from .external_api_service import ExternalAPIService
 from .http_client_manager import get_http_client_manager
+from .external_api_service import ExternalAPIService
 
 __all__ = [
     "fetch_address_by_cep",
@@ -2488,8 +2687,8 @@ __all__ = [
     "send_email",
     "send_reset_password_email",
     "send_verification_email",
-    "ExternalAPIService",
     "get_http_client_manager",
+    "ExternalAPIService",
 ]'''
 
         services_init_path = self.project_path / self.app_name / "core" / "services" / "__init__.py"
@@ -2642,7 +2841,6 @@ from datetime import datetime, timezone
 from fastapi import status
 from http import HTTPMethod
 from typing import Optional, Dict, Any, List
-from sqlalchemy.orm import query
 
 from {self.app_name}.core.models import CircuitBreakerError, ExternalAPIError
 from {self.app_name}.core.schemas import ExternalApiRequest
@@ -2782,43 +2980,99 @@ class ExternalAPIService:
     def _create_http_client_manager(self) -> None:
         """Create http_client_manager.py in services folder."""
         content = f'''"""
-Provide a method to fetch the cep.
+Provide a http client manager.
 """
 
 import httpx
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Awaitable
 
 from {self.app_name}.core.config import settings
+# Define the structure for the cleanup function
+CleanupType = Awaitable[None]
 
 
 class HTTPClientManager:
-    """Manages HTTP client with connection pooling and configuration."""
+    """
+    HTTPClientManager is a singleton class responsible for managing the global,
+    persistent httpx.AsyncClient instance.
+
+    It ensures connection pooling, timeout configurations, and header standardization
+    are applied consistently across all external API calls (e.g., Google OAuth).
+
+    This is an enterprise-grade pattern for high-performance, non-blocking I/O
+    in asynchronous applications like FastAPI.
+    """
 
     def __init__(self):
-        self.client: Optional[httpx.AsyncClient] = None
+        """Initialize the client instance to None."""
+        # The client will be created lazily on the first request
+        self._client: Optional[httpx.AsyncClient] = None
+        # Flag to prevent race conditions during initialization
+        self._is_initialized: bool = False
 
-    async def get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
-        #headers={{"User-Agent": "FastAPI-External-API-Router/1.0"}},
-        if self.client is None:
-            self.client = httpx.AsyncClient(
-                timeout=httpx.Timeout(settings.REQUEST_TIMEOUT),
-                limits=httpx.Limits(max_keepalive_connections=20, max_connections=10),
-                verify=False
-            )
-        return self.client
+    async def initialize(self):
+        """
+        Initializes the httpx.AsyncClient with defined global settings.
+        Should only be called once, typically during application startup.
+        """
+        if self._is_initialized:
+            return
 
-    async def close(self):
-        """Close HTTP client."""
-        if self.client:
-            await self.client.aclose()
-            self.client = None
+        # Define limits for connection pooling, crucial for performance
+        limits = httpx.Limits(
+            max_keepalive_connections=settings.HTTPX_MAX_KEEPALIVE,
+            max_connections=settings.HTTPX_MAX_CONNECTIONS,
+            keepalive_expiry=settings.HTTPX_KEEPALIVE_EXPIRY,
+        )
+
+        # Timeout configuration: Default request timeout
+        timeout = httpx.Timeout(settings.REQUEST_TIMEOUT)
+
+        # Standard headers for identifying our service to external APIs
+        headers = {{
+            "User-Agent": f"FastAPI-{{settings.VERSION}}-External-Router/{{settings.VERSION}}",
+            "Accept": "application/json",
+        }}
+
+        # NOTE on verify=False: This is generally unsafe in production.
+        # Only use this in development/staging with proper justification.
+        # In production, this should be True (the default).
+        self._client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=limits,
+            headers=headers,
+            # Prefer True in production for certificate validation
+            verify=settings.HTTPX_VERIFY_SSL
+        )
+        self._is_initialized = True
+
+    def get_client(self) -> httpx.AsyncClient:
+        """
+        Provides direct access to the globally configured httpx.AsyncClient instance.
+        Raises an error if the client has not been initialized.
+        """
+        if not self._client:
+            raise RuntimeError("HTTPClientManager has not been initialized. Call initialize() first.")
+        return self._client
+
+    async def close(self) -> None:
+        """
+        Gracefully closes the underlying client session and connection pool.
+        This must be called during application shutdown.
+        """
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+            self._is_initialized = False
 
 
 @lru_cache
 def get_http_client_manager() -> HTTPClientManager:
-    """Get a singleton instance of HTTPClientManager."""
+    """
+    Dependency injector and singleton pattern implementation using lru_cache.
+    Returns the single instance of the HTTPClientManager.
+    """
     return HTTPClientManager()'''
 
         http_client_manager_path = self.project_path / self.app_name / "core" / "services" / "http_client_manager.py"

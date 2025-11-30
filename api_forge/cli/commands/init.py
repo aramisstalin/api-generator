@@ -15,7 +15,7 @@ from typing import Optional
 import subprocess
 import sys
 
-from api_forge.core.exceptions import ProjectExistsError, ConfigurationError
+from api_forge.core.exceptions import ProjectExistsError
 from api_forge.core.config import ProjectConfig, GenerationConfig, DatabaseConfig
 from api_forge.templates.project import ProjectTemplate
 
@@ -136,21 +136,26 @@ def init_project(
             project_template.generate_core_files(skip_docker=skip_docker)
             progress.update(task2, completed=True)
 
-            # Task 3: Create configuration files
-            task3 = progress.add_task("Creating configuration files...", total=None)
-            project_template.generate_config_files()
+            # Task 3: Generate middleware files
+            task3 = progress.add_task("Generating middleware files...", total=None)
+            project_template.generate_middleware_files()
             progress.update(task3, completed=True)
 
-            # Task 4: Create common files
-            task4 = progress.add_task("Creating common files...", total=None)
-            project_template.generate_common_files()
+            # Task 4: Create configuration files
+            task4 = progress.add_task("Creating configuration files...", total=None)
+            project_template.generate_config_files()
             progress.update(task4, completed=True)
 
-            # Task 5: Initialize Git
+            # Task 5: Create common files
+            task5 = progress.add_task("Creating common files...", total=None)
+            project_template.generate_common_files()
+            progress.update(task5, completed=True)
+
+            # Task 6: Initialize Git
             if not skip_git:
-                task5 = progress.add_task("Initializing Git repository...", total=None)
+                task6 = progress.add_task("Initializing Git repository...", total=None)
                 _init_git(project_path)
-                progress.update(task5, completed=True)
+                progress.update(task6, completed=True)
 
             # Task 6: Create virtual environment
             if not skip_venv:
